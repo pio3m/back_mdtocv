@@ -3,4 +3,5 @@ uvicorn
 python-multipart
 pymupdf
 openai
+httpx
 python-dotenv

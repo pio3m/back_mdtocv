@@ -6,6 +6,8 @@ import openai
 import os
 import json
 from dotenv import load_dotenv
+import httpx
+
 
 app = FastAPI()
 load_dotenv()
@@ -20,6 +22,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Verify license key with Gumroad
+async def verify_license_with_gumroad(license_key: str) -> bool:
+    print(license_key)  # Debugging output
+    product_id = os.getenv("GUMROAD_PRODUCT_ID")
+    url = "https://api.gumroad.com/v2/licenses/verify"
+    payload = {
+        "product_id": product_id,
+        "license_key": license_key
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, data=payload)
+            result = response.json()
+            print(f"License verification result: {result}")  # Debugging output
+            return result.get("success") and not result.get("purchase", {}).get("refunded", False)
+    except Exception as e:
+        print(f"Error verifying license: {e}")
+        return False
+    
+
 # Load dummy license keys
 with open("licenses.json") as f:
     VALID_KEYS = set(json.load(f))
@@ -30,10 +53,26 @@ client = openai.OpenAI()
 class MarkdownResponse(BaseModel):
     markdown: str
 
+# Check license validity and usage
+async def _validate_license(license: str) -> None:
+    try:
+        with open("used_licenses.json") as f:
+            used = set(json.load(f))
+    except FileNotFoundError:
+        used = set()
+
+    is_valid = await verify_license_with_gumroad(license)
+    if not is_valid:
+        raise HTTPException(status_code=403, detail="Invalid or refunded license key")
+
+    if license in used:
+        raise HTTPException(status_code=403, detail="License key has already been used")
+
+    return
+
 @app.post("/parse-cv", response_model=MarkdownResponse)
 async def parse_cv(license: str = Form(...), file: UploadFile = File(...)):
-    if license not in VALID_KEYS:
-        raise HTTPException(status_code=403, detail="Invalid license key")
+    await _validate_license(license)
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -68,13 +107,22 @@ Please return only the markdown content.
             temperature=0.5
         )
         markdown = response.choices[0].message.content.strip()
-# TODO pozbyć się znacznika ```markkdowan jaki zwraca gpt-4-turbo
         if markdown.startswith("```markdown"):
             markdown = markdown[11:].strip()
         if markdown.endswith("```"):
             markdown = markdown[:-3].strip()
               
+        # Save the license as used
+        try:
+            with open("used_licenses.json") as f:
+                used = set(json.load(f))
+        except FileNotFoundError:
+            used = set()
+        used.add(license)
+        with open("used_licenses.json", "w") as f:
+            json.dump(list(used), f)
 
+        # Return the markdown response
         return {"markdown": markdown}
 
     except Exception as e:
