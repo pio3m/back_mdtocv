@@ -1,4 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import fitz  # PyMuPDF
@@ -69,6 +70,10 @@ async def _validate_license(license: str) -> None:
         raise HTTPException(status_code=403, detail="License key has already been used")
 
     return
+
+@app.get("/ping", response_class=PlainTextResponse)
+async def ping():
+    return "pong"
 
 @app.post("/parse-cv", response_model=MarkdownResponse)
 async def parse_cv(license: str = Form(...), file: UploadFile = File(...)):
