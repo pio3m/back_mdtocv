@@ -54,8 +54,10 @@ client = openai.OpenAI()
 class MarkdownResponse(BaseModel):
     markdown: str
 
-# Check license validity and usage
-async def _validate_license(license: str) -> None:
+async def _validate_license(license: str) -> str:
+    if license in VALID_KEYS:
+        return "local"
+
     try:
         with open("used_licenses.json") as f:
             used = set(json.load(f))
@@ -69,7 +71,7 @@ async def _validate_license(license: str) -> None:
     if license in used:
         raise HTTPException(status_code=403, detail="License key has already been used")
 
-    return
+    return "gumroad"
 
 @app.get("/ping", response_class=PlainTextResponse)
 async def ping():
@@ -77,7 +79,8 @@ async def ping():
 
 @app.post("/parse-cv", response_model=MarkdownResponse)
 async def parse_cv(license: str = Form(...), file: UploadFile = File(...)):
-    await _validate_license(license)
+    license_type = await _validate_license(license)
+
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -107,7 +110,7 @@ Please return only the markdown content.
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-3.5-turbo-0125",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5
         )
@@ -118,14 +121,16 @@ Please return only the markdown content.
             markdown = markdown[:-3].strip()
               
         # Save the license as used
-        try:
-            with open("used_licenses.json") as f:
-                used = set(json.load(f))
-        except FileNotFoundError:
-            used = set()
-        used.add(license)
-        with open("used_licenses.json", "w") as f:
-            json.dump(list(used), f)
+        if license_type == "gumroad":
+            try:
+                with open("used_licenses.json") as f:
+                    used = set(json.load(f))
+            except FileNotFoundError:
+                used = set()
+            used.add(license)
+            with open("used_licenses.json", "w") as f:
+                json.dump(list(used), f)
+
 
         # Return the markdown response
         return {"markdown": markdown}
