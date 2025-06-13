@@ -1,7 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 import io
-from fpdf import FPDF
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import fitz  # PyMuPDF
@@ -10,6 +9,12 @@ import os
 import json
 from dotenv import load_dotenv
 import httpx
+import textwrap
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
+import markdown
+from xhtml2pdf import pisa
+
 
 
 app = FastAPI()
@@ -141,30 +146,40 @@ Please return only the markdown content.
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# PDF generator
-def generate_pdf_from_markdown(md_text: str) -> io.BytesIO:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("Arial", size=12)
-    for line in md_text.strip().split('\n'):
-        pdf.multi_cell(0, 8, line)
-    buffer = io.BytesIO()
-    pdf.output(buffer)
-    buffer.seek(0)
-    return buffer
-
 @app.get("/download-guide")
 async def download_guide():
     try:
         with open("guide.md", "r", encoding="utf-8") as f:
-            guide_md = f.read()
+            markdown_text = f.read()
     except FileNotFoundError:
-        return {"error": "guide.md file not found in current directory."}
+        raise HTTPException(status_code=404, detail="guide.md not found")
 
-    pdf_file = generate_pdf_from_markdown(guide_md)
+    # Convert markdown to HTML
+    html = markdown.markdown(markdown_text)
+
+    # Wrap HTML in minimal structure
+    html = f"""
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          body {{ font-family: Helvetica, sans-serif; font-size: 12pt; }}
+          h1, h2, h3 {{ color: #2a2a2a; }}
+          pre {{ background: #f4f4f4; padding: 0.5em; }}
+          code {{ font-family: monospace; }}
+        </style>
+      </head>
+      <body>{html}</body>
+    </html>
+    """
+
+    # Generate PDF from HTML
+    buffer = io.BytesIO()
+    pisa.CreatePDF(html, dest=buffer)
+    buffer.seek(0)
+
     return StreamingResponse(
-        pdf_file,
+        buffer,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=ai-cv-action-guide.pdf"}
     )
